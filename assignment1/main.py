@@ -19,7 +19,7 @@ def get_args():
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=300)
     parser.add_argument("--hid_layer", type=int, default=3)
-    parser.add_argument("--word_drop", type=float, default=0.3)
+    parser.add_argument("--word_drop", type=float, default=0)
     parser.add_argument("--emb_drop", type=float, default=0.333)
     parser.add_argument("--hid_drop", type=float, default=0.333)
     parser.add_argument("--pooling_method", type=str, default="avg", choices=["sum", "avg", "max"])
@@ -87,6 +87,7 @@ def pad_sentences(sents, pad_id):
         while(i<ma):
             sen.append(pad_id)
             i+=1
+    return sents
     #raise NotImplementedError()
 
 def compute_grad_norm(model, norm_type=2):
@@ -175,6 +176,8 @@ def main():
             X = pad_sentences(batch[0], word_vocab['<pad>'])
             X = torch.LongTensor(X).to(device)
             Y = torch.LongTensor(batch[1]).to(device)
+            #print('X({}):\n'.format(X.size()),X)
+            #print('Y({}):\n'.format(Y.size()),Y)
             # Forward pass: compute the unnormalized scores for P(Y|X)
             scores = model(X)
             loss = loss_func(scores, Y)
