@@ -31,31 +31,38 @@ class BertSelfAttention(nn.Module):
     # this is done by spliting the hidden state to self.num_attention_heads, each of size self.attention_head_size
     proj = proj.view(bs, seq_len, self.num_attention_heads, self.attention_head_size)
     # by proper transpose, we have proj of [bs, num_attention_heads, seq_len, attention_head_size]
-    #proj = proj.transpose(1, 2)
+    proj = proj.transpose(1, 2)
     return proj
 
   def attention(self, key, query, value, attention_mask):
     # each attention is calculated following eq (1) of https://arxiv.org/pdf/1706.03762.pdf
     # attention scores are calculated by multiply query and key 
-    # SAM: query and key are both [bs,  seq_len,num_attention_heads, attention_head_size]
+    # SAM: query and key are both [bs,  num_attention_heads, seq_len, attention_head_size]
     # and get back a score matrix S of [bs, num_attention_heads, seq_len, seq_len]
     # S[*, i, j, k] represents the (unnormalized)attention score between the j-th and k-th token, given by i-th attention head
     # before normalizing the scores, use the attention mask to mask out the padding token scores
     # Note again: in the attention_mask non-padding tokens with 0 and padding tokens with a large negative number 
-    S=torch.einsum('bqna,bkna->bnqk',[query,key])
+    
+    #S=torch.einsum('bqna,bkna->bnqk',[query,key])
+    S=torch.matmul(query,key.transpose(-2,-1))/(self.all_head_size**(1/2))
     if attention_mask is not None:
-      S=S.masked_fill(attention_mask==0,float("-1e28"))
+      attention_mask.unsqueeze(1)
+      S=S.masked_fill(attention_mask==0,-1e9)
     # normalize the scores
-    S/=self.all_head_size**(1/2)
+    S/=self.all_head_size**(0.5)
     # multiply the attention scores to the value and get back V' 
-    S=F.softmax(S,dim=3)
-    Vp= torch.einsum('bnqv,bvna->bqna',[S,value])
+    S=F.softmax(S,dim=-1)
+    #Vp= torch.einsum('bnqv,bvna->bqna',[S,value])
+    S=torch.matmul(S,value)
+    bs=S.shape[0]
     # next, we need to concat multi-heads and recover the original shape [bs, seq_len, num_attention_heads * attention_head_size = hidden_size]
-    bs,seq_len,num_attention_heads,attention_head_size = Vp.shape
+    concat=S.transpose(1,2).contiguous().view(bs,-1,self.all_head_size)
+    #bs,seq_len,num_attention_heads,attention_head_size = Vp.shape
     #now we have [bs,seq_len,num_attention_heads,attention_head_size]
-    Vp=Vp.reshape(bs, seq_len, num_attention_heads * attention_head_size)
+    #Vp=Vp.reshape(bs, seq_len, num_attention_heads * attention_head_size)
+
     #raise NotImplementedError
-    return Vp
+    return concat
 
   def forward(self, hidden_states, attention_mask):
     """
@@ -97,14 +104,14 @@ class BertLayer(nn.Module):
     dense_layer, dropput: the sublayer
     ln_layer: layer norm that takes input+sublayer(output) #SAM NOTE Really?
     """
-    """
+    
     #sublayer
-    output=dropout(dense_layer(output))
+    output=dense_layer(dropout(output))
     #output=sublayer(output)
     output=ln_layer(input+output)#with skip connection #is it self.dropout(self.norm)??
     return output
-    """
-    return dropout(ln_layer(input+output))
+    
+    #return dropout(ln_layer(input+output))
     # todo
     #raise NotImplementedError
 
@@ -120,17 +127,17 @@ class BertLayer(nn.Module):
     """
     # todo
     # multi-head attention w/ self.self_attention
-    attention=self.attention_dense(self.self_attention(hidden_states,attention_mask))
-
+    #attention=self.attention_dense(self.self_attention(hidden_states,attention_mask))
+    attention=self.self_attention(hidden_states,attention_mask)
     # add-norm layer
     x=self.add_norm(hidden_states,attention,self.attention_dense,self.attention_dropout,self.attention_layer_norm)
 
     # feed forward
-    '''
+    
     feed_forward=self.interm_dense(x)
     feed_forward=self.interm_af(feed_forward)
-    '''
-    feed_forward=nn.Sequential(self.interm_dense,nn.GELU(),self.out_dense)(x)
+    
+    #feed_forward=nn.Sequential(self.interm_dense,nn.GELU(),self.out_dense)(x)
     # another add-norm layer
     out=self.add_norm(x,feed_forward,self.out_dense, self.out_dropout, self.out_layer_norm)
     #raise NotImplementedError
