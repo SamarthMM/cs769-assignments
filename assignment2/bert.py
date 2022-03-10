@@ -37,17 +37,24 @@ class BertSelfAttention(nn.Module):
   def attention(self, key, query, value, attention_mask):
     # each attention is calculated following eq (1) of https://arxiv.org/pdf/1706.03762.pdf
     # attention scores are calculated by multiply query and key 
+    # SAM: query and key are both [bs, num_attention_heads, seq_len, attention_head_size]
     # and get back a score matrix S of [bs, num_attention_heads, seq_len, seq_len]
     # S[*, i, j, k] represents the (unnormalized)attention score between the j-th and k-th token, given by i-th attention head
     # before normalizing the scores, use the attention mask to mask out the padding token scores
     # Note again: in the attention_mask non-padding tokens with 0 and padding tokens with a large negative number 
-
+    S=torch.einsum('bnsa,bnsa->bnss',[query,key])
+    if attention_mask is not None:
+      S=S.masked_fill(mask==0,float("-1e28"))
     # normalize the scores
-
+    S/=self.all_head_size**(1/2)
     # multiply the attention scores to the value and get back V' 
-
+    S=F.softmax(S,dim=2)
+    Vp= torch.einsum('bnss,bnsa->bsna',[S,value])
     # next, we need to concat multi-heads and recover the original shape [bs, seq_len, num_attention_heads * attention_head_size = hidden_size]
-    raise NotImplementedError
+    bs,seq_len,num_attention_heads,attention_head_size = Vp.shape
+    torch.reshape(Vp,(bs, seq_len, num_attention_heads * attention_head_size))
+    #raise NotImplementedError
+    return Vp
 
   def forward(self, hidden_states, attention_mask):
     """
@@ -76,6 +83,7 @@ class BertLayer(nn.Module):
     # feed forward
     self.interm_dense = nn.Linear(config.hidden_size, config.intermediate_size)
     self.interm_af = F.gelu
+    #NOTE: No norm here?
     # layer out
     self.out_dense = nn.Linear(config.intermediate_size, config.hidden_size)
     self.out_layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -88,6 +96,11 @@ class BertLayer(nn.Module):
     dense_layer, dropput: the sublayer
     ln_layer: layer norm that takes input+sublayer(output)
     """
+    #sublayer
+    output=dense_layer(output)
+    output=dropout(output)
+    #output=sublayer(output)
+    output=ln_layer(input+output)#with skip connection
     # todo
     raise NotImplementedError
 
@@ -103,15 +116,20 @@ class BertLayer(nn.Module):
     """
     # todo
     # multi-head attention w/ self.self_attention
+    x=self.self_attention(hidden_states)
 
     # add-norm layer
+    x=add_norm(hidden_states,x,self.attention_dense,self.attention_dropout,self.attention_layer_norm)
 
     # feed forward
+    feed_forward=self.interm_dense(x)
+    feed_forward=self.interm_af(feed_forward)
 
+    x=self.out_dense(bef_feed_forward)
     # another add-norm layer
-
-
-    raise NotImplementedError
+    out=add_norm(x,feed_forward,self.out_dense, self.out_dropout, self.out_layer_norm)
+    #raise NotImplementedError
+    return out
 
 
 class BertModel(BertPreTrainedModel):
