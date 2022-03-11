@@ -44,25 +44,31 @@ class BertSelfAttention(nn.Module):
     # Note again: in the attention_mask non-padding tokens with 0 and padding tokens with a large negative number 
     
     #S=torch.einsum('bqna,bkna->bnqk',[query,key])
-    S=torch.matmul(query,key.transpose(-2,-1))/(self.all_head_size**(1/2))
+    S=torch.matmul(query,key.transpose(-1,-2))/(self.attention_head_size**(1/2))
     if attention_mask is not None:
-      attention_mask.unsqueeze(1)
-      S=S.masked_fill(attention_mask==0,-1e9)
+      #attention_mask.unsqueeze(1)
+      #S=S.masked_fill(attention_mask==0,-1e9)
+      S+=attention_mask
     # normalize the scores
-    S/=self.all_head_size**(0.5)
+    #S/=self.all_head_size**(0.5)
     # multiply the attention scores to the value and get back V' 
-    S=F.softmax(S,dim=-1)
+    S_p=F.softmax(S,dim=-1)
+
+    ##Didnt add this before!!!!!
+    S_p=self.dropout(S_p)
     #Vp= torch.einsum('bnqv,bvna->bqna',[S,value])
-    S=torch.matmul(S,value)
-    bs=S.shape[0]
+    context_layer=torch.matmul(S_p,value)
     # next, we need to concat multi-heads and recover the original shape [bs, seq_len, num_attention_heads * attention_head_size = hidden_size]
-    concat=S.transpose(1,2).contiguous().view(bs,-1,self.all_head_size)
+    context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+    new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+    context_layer = context_layer.view(new_context_layer_shape)
+    #concat=S.transpose(1,2).contiguous().view(bs,-1,self.all_head_size)
     #bs,seq_len,num_attention_heads,attention_head_size = Vp.shape
     #now we have [bs,seq_len,num_attention_heads,attention_head_size]
     #Vp=Vp.reshape(bs, seq_len, num_attention_heads * attention_head_size)
 
     #raise NotImplementedError
-    return concat
+    return context_layer
 
   def forward(self, hidden_states, attention_mask):
     """
@@ -106,7 +112,7 @@ class BertLayer(nn.Module):
     """
     
     #sublayer
-    output=dense_layer(dropout(output))
+    output=dropout(dense_layer(output))
     #output=sublayer(output)
     output=ln_layer(input+output)#with skip connection #is it self.dropout(self.norm)??
     return output
@@ -165,7 +171,6 @@ class BertModel(BertPreTrainedModel):
     # position_ids (1, len position emb) is a constant, register to buffer
     position_ids = torch.arange(config.max_position_embeddings).unsqueeze(0)
     self.register_buffer('position_ids', position_ids)
-    self.position_ids=position_ids
 
     # bert encoder
     self.bert_layers = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
