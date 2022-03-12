@@ -38,12 +38,24 @@ class BertSentClassifier(torch.nn.Module):
                 param.requires_grad = True
 
         # todo
-        raise NotImplementedError
+        self.dropout=torch.nn.Dropout(config.hidden_dropout_prob)
+        self.dense = torch.nn.Linear(config.hidden_size, config.num_labels)
+        #self.activation = torch.nn.Tanh()
+
+        #raise NotImplementedError
 
     def forward(self, input_ids, attention_mask):
         # todo
+        #call the bert model. This should output CLS token (pooler output) and the contextualized representations
+        #(last hidden state)
+        outputs=self.bert(input_ids,attention_mask)
+        contextualized_sentence_representation=outputs['last_hidden_state']*attention_mask.unsqueeze(-1)
+        first_token_tensor=outputs['pooler_output']     
         # the final bert contextualize embedding is the hidden state of [CLS] token (the first token)
-        raise NotImplementedError
+        first_token_tensor=self.dropout(first_token_tensor)
+        pooled_output = self.dense(first_token_tensor)
+        #pooled_output = self.activation(pooled_output)
+        return F.log_softmax(pooled_output, dim=1)
 
 # create a custom Dataset Class to be used for the dataloader
 class BertDataset(Dataset):
